@@ -657,9 +657,9 @@ verifychecksums(char *msg, int argc, char **argv, int quiet)
 	struct ohash_info info = { 0, NULL, ecalloc, efree, NULL };
 	struct ohash myh;
 	struct checksum c;
-	char *e, *line, *endline;
+	char *e, *line, *endline, *parenthesis;
 	int hasfailed = 0;
-	int i, rv;
+	int i, rv, len;
 	unsigned int slot;
 
 	ohash_init(&myh, 6, &info);
@@ -679,18 +679,40 @@ verifychecksums(char *msg, int argc, char **argv, int quiet)
 #if PATH_MAX < 1024 || HASHBUFSIZE < 224
 #error sizes are wrong
 #endif
-		rv = sscanf(line, "%31s (%1023[^)]) = %223s",
-		    c.algo, c.file, c.hash);
-		if (rv != 3)
-			errx(1, "unable to parse checksum line %s", line);
-		line = endline;
-		if (argc) {
-			slot = ohash_qlookup(&myh, c.file);
-			e = ohash_find(&myh, slot);
-			if (e != NULL) {
-				if (verifychecksum(&c, quiet) != 0)
-					ohash_remove(&myh, slot);
-			}
+    /* Look for well-formed algorithm first */
+    rv = sscanf(line, "%31s ", c.algo);
+    if (rv != 1)
+      errx(1, "unable to parse checksum type in in %s", line);
+    line += strlen(c.algo);
+    /* skip whitespace */
+    while ((*line) && (*line == ' ' || *line == '\t'))
+      line++;
+    /* Look for opening and closing parenthesis */
+    parenthesis = strchr(line, '(');
+    if (!parenthesis)
+      errx(1, "unable to find beginning of filename in %s", line);
+    line = ++parenthesis;
+    parenthesis = strrchr(line, ')');
+    if (!parenthesis)
+      errx(1, "unable to find end of filename in %s", line);
+    len = parenthesis - line;
+    /* copy over filename - might contain ")" */
+    memset(c.file + len, 0, PATH_MAX - len);
+    memcpy(c.file, line, len);
+    /* extract hash */
+    line = parenthesis + 1;
+    rv = sscanf(line, " = %223s", c.hash);
+    if (rv != 1)
+      errx(1, "unable to extract hash from %s", line);
+
+    line = endline;
+    if (argc) {
+      slot = ohash_qlookup(&myh, c.file);
+      e = ohash_find(&myh, slot);
+      if (e != NULL) {
+        if (verifychecksum(&c, quiet) != 0)
+          ohash_remove(&myh, slot);
+      }
 		} else {
 			if (verifychecksum(&c, quiet) == 0) {
 				slot = ohash_qlookup(&myh, c.file);
